@@ -75,7 +75,7 @@ class VirusTotal(commands.Cog, name="virustotal"):
                       return True. Else, return False.
 
         """
-        THRESHOLD: float = 0.2
+        THRESHOLD: float = 0.2  # arbitrary
         scan_analysis: dict[str, Any] = file.last_analysis_stats
 
         noteworthy: int = 0
@@ -83,9 +83,9 @@ class VirusTotal(commands.Cog, name="virustotal"):
         for (classification, count) in scan_analysis.items():
             match classification:
                 case "malicious":
-                    noteworthy += 2
+                    noteworthy += (2 * count)
                 case "suspicious":
-                    noteworthy += 1
+                    noteworthy += count
                 case _: pass
             if isinstance(count, int):
                 total += count
