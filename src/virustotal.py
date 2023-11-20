@@ -4,7 +4,7 @@ from discord.ext import commands
 from hashlib import md5
 from io import BytesIO
 from os import getenv
-from typing import Optional
+from typing import Any, Optional
 import discord
 import vt
 
@@ -20,6 +20,14 @@ class VirusTotal(commands.Cog, name="virustotal"):
     )
     async def _ping(self: VirusTotal, interaction: discord.Interaction) -> None:
         await interaction.response.send_message("Pong!")
+        return
+
+    @commands.Cog.listener()
+    async def on_message(self: VirusTotal, message: discord.Message) -> None:
+        # check the message for attachments and urls
+        # query virustotal for them
+        # block the message if a certain number of urls
+        #   or attachments are suspicious/malicious
         return
 
     async def _scan_file(self: VirusTotal, file_url: str) -> vt.Object:
@@ -57,6 +65,32 @@ class VirusTotal(commands.Cog, name="virustotal"):
             file = await self._vt.scan_url_async(url, wait_for_completion=True)
 
         return file
+
+    def is_blockable(self: VirusTotal, file: vt.Object) -> bool:
+        """
+        Determines if the file/url is malicious or suspicious, and therefore
+        blockable.
+        @param file (vt.Object): The scan report.
+        @return bool: If the file/url is suspicious (20% of vendors need to agree),
+                      return True. Else, return False.
+
+        """
+        THRESHOLD: float = 0.2
+        scan_analysis: dict[str, Any] = file.last_analysis_stats
+
+        noteworthy: int = 0
+        total: int = 0
+        for (classification, count) in scan_analysis.items():
+            match classification:
+                case "malicious":
+                    noteworthy += 2
+                case "suspicious":
+                    noteworthy += 1
+                case _: pass
+            if isinstance(count, int):
+                total += count
+
+        return (noteworthy / total) >= THRESHOLD
 
     async def _fetch_file(self: VirusTotal, url: str) -> bytes:
         async with ClientSession() as session:
