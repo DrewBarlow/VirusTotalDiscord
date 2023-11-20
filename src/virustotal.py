@@ -5,6 +5,7 @@ from hashlib import md5
 from io import BytesIO
 from os import getenv
 from typing import Any, Optional
+from validators import url
 import discord
 import vt
 
@@ -14,30 +15,45 @@ class VirusTotal(commands.Cog, name="virustotal"):
         self._vt: vt.Client = vt.Client(str(getenv("VT_API_KEY")))
         return
 
-    @discord.app_commands.command(
-        name="ping",
-        description="Generic ping command."
-    )
-    async def _ping(self: VirusTotal, interaction: discord.Interaction) -> None:
-        await interaction.response.send_message("Pong!")
-        return
-
     @commands.Cog.listener()
     async def on_message(self: VirusTotal, message: discord.Message) -> None:
         # check the message for attachments and urls
-        # query virustotal for them
-        # block the message if a certain number of urls
-        #   or attachments are suspicious/malicious
+        urls: list[str] = [word for word in message.content.split() if url(word)]
+        if not (urls or message.attachments): return
+        attachment_files: dict[str, bytes] = {file.filename: await file.read() for file in message.attachments}
+
+        # query virustotal for attachments
+        should_block: bool = False
+        for fbytes in attachment_files.values():
+            obj: vt.Object = await self._scan_file(fbytes=fbytes)
+            should_block = self._is_blockable(obj)
+            if should_block: break
+
+        # query virustotal for urls if no attachments
+        # were detected as suspicious
+        if not should_block:
+            for url_ in urls:
+                obj: vt.Object = await self._scan_url(url_)
+                should_block = self._is_blockable(obj)
+                if should_block: break
+
+        # delete the message and report the incident if anything
+        # is flagged
+        if should_block:
+            await message.delete()
+            await message.channel.send(f"Detected suspicious/malicious file in a message sent by {message.author.mention}.")
+
         return
 
-    async def _scan_file(self: VirusTotal, file_url: str) -> vt.Object:
+    async def _scan_file(self: VirusTotal, *, url: str="", fbytes: bytes=b"") -> vt.Object:
         """
-        @param file_url (str): The url to the file to scan.
+        @param file_bytes (bytes): The bytes of a file to scan.
         @return vt.Object: The scanned file.
         """
-        # load the file into ram and get the md5 hash of it
-        file_bytes: bytes = await self._fetch_file(file_url)
-        file_hash: str = md5(file_bytes).hexdigest()
+        if url:
+            # load the file into ram and get the md5 hash of it
+            fbytes = await self._fetch_file(url)
+        file_hash: str = md5(fbytes).hexdigest()
 
         file: Optional[vt.Object] = None
         try:
@@ -66,13 +82,12 @@ class VirusTotal(commands.Cog, name="virustotal"):
 
         return file
 
-    def is_blockable(self: VirusTotal, file: vt.Object) -> bool:
+    def _is_blockable(self: VirusTotal, file: vt.Object) -> bool:
         """
         Determines if the file/url is malicious or suspicious, and therefore
         blockable.
         @param file (vt.Object): The scan report.
-        @return bool: If the file/url is suspicious (20% of vendors need to agree),
-                      return True. Else, return False.
+        @return bool: If the file/url is suspicious (20% of vendors need to agree), return True.
 
         """
         THRESHOLD: float = 0.2  # arbitrary
